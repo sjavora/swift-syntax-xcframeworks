@@ -1,0 +1,34 @@
+name: Create release
+
+on:
+  workflow_dispatch:
+    inputs:
+      swift_syntax_tag:
+        description: 'The tag to base the release on from the swift-syntax repository.'
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: macos-latest
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+    - run: .github/bootstrap.sh ${{ inputs.swift_syntax_tag }} SwiftBasicFormat SwiftCompilerPlugin SwiftCompilerPluginMessageHandling SwiftDiagnostics SwiftIDEUtils SwiftOperators SwiftParser SwiftParserDiagnostics SwiftRefactor SwiftSyntax SwiftSyntaxBuilder SwiftSyntaxMacros SwiftSyntaxMacroExpansion SwiftSyntaxMacrosTestSupport _SwiftSyntaxTestSupport
+    - uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: Updated for release ${{ inputs.swift_syntax_tag }}
+        tagging_message: ${{ inputs.swift_syntax_tag }}
+        file_pattern: "*.swift Sources/*"
+    - uses: softprops/action-gh-release@v1
+      with:
+        draft: false
+        name: ${{ inputs.swift_syntax_tag }}
+        tag_name: ${{ inputs.swift_syntax_tag }}
+        body: Release from swift-syntax ${{ inputs.swift_syntax_tag }}
+        files: "*.xcframework.zip"
+        fail_on_unmatched_files: true
