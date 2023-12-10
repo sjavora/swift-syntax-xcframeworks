@@ -1,11 +1,12 @@
 #!/bin/bash
 
 SWIFT_SYNTAX_VERSION=$1
-RELEVANT_PRODUCTS=${@:2}
 SWIFT_SYNTAX_NAME="swift-syntax"
 SWIFT_SYNTAX_REPOSITORY_URL="https://github.com/apple/$SWIFT_SYNTAX_NAME.git"
 SEMVER_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
-WRAPPER_PACKAGE_NAME="SwiftSyntaxWrapper"
+WRAPPER_NAME="SwiftSyntaxWrapper"
+ARCH="arm64"
+CONFIGURATION="debug"
 
 #
 # Verify input
@@ -21,11 +22,6 @@ if ! [[ $SWIFT_SYNTAX_VERSION =~ $SEMVER_PATTERN ]]; then
     exit 1
 fi
 
-if [ -z "$RELEVANT_PRODUCTS" ]; then
-    echo "Specify at least one product name to build."
-    exit 1
-fi
-
 #
 # Print input
 #
@@ -34,7 +30,6 @@ cat << EOF
 
 Input:
 swift-syntax version to build:  $SWIFT_SYNTAX_VERSION
-products to build:              $RELEVANT_PRODUCTS
 
 EOF
 
@@ -47,46 +42,78 @@ set -eux
 git clone --branch $SWIFT_SYNTAX_VERSION --single-branch $SWIFT_SYNTAX_REPOSITORY_URL
 
 #
-# Add _SwiftSyntaxTestSupport to products so that unit test targets are also supported
+# Add static wrapper product
 #
 
-sed -i '' -E 's/(products: \[)$/\1\n    .library(name: "_SwiftSyntaxTestSupport", targets: ["_SwiftSyntaxTestSupport"]),/g' "$SWIFT_SYNTAX_NAME/Package.swift"
+sed -i '' -E "s/(products: \[)$/\1\n    .library(name: \"${WRAPPER_NAME}\", type: .static, targets: [\"${WRAPPER_NAME}\"]),/g" "$SWIFT_SYNTAX_NAME/Package.swift"
 
 #
-# Build static libraries
+# Add target for wrapper product
 #
 
-sed -i '' 's/, targets:/, type: .static, targets:/g' "$SWIFT_SYNTAX_NAME/Package.swift"
-swift build --package-path $SWIFT_SYNTAX_NAME --arch arm64 -c debug -Xswiftc -enable-library-evolution -Xswiftc -emit-module-interface
+sed -i '' -E "s/(targets: \[)$/\1\n    .target(name: \"${WRAPPER_NAME}\", dependencies: [\"SwiftCompilerPlugin\", \"SwiftSyntax\", \"SwiftSyntaxBuilder\", \"SwiftSyntaxMacros\", \"SwiftSyntaxMacrosTestSupport\"]),/g" "$SWIFT_SYNTAX_NAME/Package.swift"
 
 #
-# Create XCFrameworks
+# Add exported imports to wrapper target
 #
 
-for PRODUCT_NAME in $RELEVANT_PRODUCTS; do
+WRAPPER_TARGET_SOURCES_PATH="$SWIFT_SYNTAX_NAME/Sources/$WRAPPER_NAME"
 
-    PATH_TO_LIBRARY="$SWIFT_SYNTAX_NAME/.build/arm64-apple-macosx/debug/lib$PRODUCT_NAME.a"
-    PATH_TO_INTERFACE="$SWIFT_SYNTAX_NAME/.build/arm64-apple-macosx/debug/$PRODUCT_NAME.build/$PRODUCT_NAME.swiftinterface"
-    XCFRAMEWORK_NAME="$PRODUCT_NAME.xcframework"
+mkdir -p $WRAPPER_TARGET_SOURCES_PATH
 
-    if ! [ -f "$PATH_TO_LIBRARY" ]; then
-        echo "library does not exist."
-        exit 1
-    fi
+tee $WRAPPER_TARGET_SOURCES_PATH/ExportedImports.swift <<EOF
+@_exported import SwiftCompilerPlugin
+@_exported import SwiftSyntax
+@_exported import SwiftSyntaxBuilder
+@_exported import SwiftSyntaxMacros
+EOF
 
-    if ! [ -f "$PATH_TO_INTERFACE" ]; then
-        echo "interface does not exist."
-        exit 1
-    fi
+#
+# Build the wrapper
+#
 
-    xcodebuild -create-xcframework -library $PATH_TO_LIBRARY -output $XCFRAMEWORK_NAME
-    cp $PATH_TO_INTERFACE $XCFRAMEWORK_NAME/macos-arm64
-    zip --quiet --recurse-paths $XCFRAMEWORK_NAME.zip $XCFRAMEWORK_NAME
+swift build --package-path $SWIFT_SYNTAX_NAME --arch $ARCH -c $CONFIGURATION -Xswiftc -enable-library-evolution -Xswiftc -emit-module-interface
+
+#
+# Create XCFramework
+#
+
+PATH_TO_LIBRARY="$SWIFT_SYNTAX_NAME/.build/$ARCH-apple-macosx/$CONFIGURATION/lib$WRAPPER_NAME.a"
+XCFRAMEWORK_NAME="$WRAPPER_NAME.xcframework"
+xcodebuild -create-xcframework -library $PATH_TO_LIBRARY -output $XCFRAMEWORK_NAME
+
+MODULES=(
+    "SwiftBasicFormat"
+    "SwiftCompilerPlugin"
+    "SwiftCompilerPluginMessageHandling"
+    "SwiftDiagnostics"
+    "SwiftIDEUtils"
+    "SwiftOperators"
+    "SwiftParser"
+    "SwiftParserDiagnostics"
+    "SwiftRefactor"
+    "SwiftSyntax"
+    "SwiftSyntaxBuilder"
+    "SwiftSyntaxMacroExpansion"
+    "SwiftSyntaxMacros"
+    "SwiftSyntaxMacrosTestSupport"
+    "_SwiftSyntaxTestSupport"
+    "$WRAPPER_NAME"
+)
+
+for MODULE in ${MODULES[@]}; do
+    PATH_TO_INTERFACE="$SWIFT_SYNTAX_NAME/.build/$ARCH-apple-macosx/${CONFIGURATION}/${MODULE}.build/${MODULE}.swiftinterface"
+    cp "${PATH_TO_INTERFACE}" "${XCFRAMEWORK_NAME}/macos-${ARCH}"
 done
+
+zip --quiet --recurse-paths $XCFRAMEWORK_NAME.zip $XCFRAMEWORK_NAME
 
 #
 # Create package manifest
 #
+
+CHECKSUM=$(swift package compute-checksum $XCFRAMEWORK_NAME.zip)
+URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$SWIFT_SYNTAX_VERSION/$XCFRAMEWORK_NAME.zip"
 
 tee Package.swift <<EOF
 // swift-tools-version: 5.9
@@ -94,45 +121,16 @@ tee Package.swift <<EOF
 import PackageDescription
 
 let package = Package(
-    name: "$WRAPPER_PACKAGE_NAME",
+    name: "$WRAPPER_NAME",
     products: [
-        .library(
-            name: "$WRAPPER_PACKAGE_NAME",
-            targets: [
-EOF
-
-for PRODUCT_NAME in $RELEVANT_PRODUCTS; do
-    echo "                \"$PRODUCT_NAME\"," >> Package.swift
-done
-
-tee -a Package.swift <<EOF
-            ]
-        )
+        .library(name: "$WRAPPER_NAME", targets: ["$WRAPPER_NAME"]),
     ],
     targets: [
-EOF
-
-for PRODUCT_NAME in $RELEVANT_PRODUCTS; do
-    CHECKSUM=$(swift package compute-checksum $PRODUCT_NAME.xcframework.zip)
-    URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$SWIFT_SYNTAX_VERSION/$PRODUCT_NAME.xcframework.zip"
-
-    tee -a Package.swift <<EOF
         .binaryTarget(
-            name: "$PRODUCT_NAME",
+            name: "$WRAPPER_NAME",
             url: "$URL",
             checksum: "$CHECKSUM"
         ),
-EOF
-done
-
-tee -a Package.swift <<EOF
     ]
 )
 EOF
-
-#
-# Create rest of dummy package
-#
-
-mkdir -p Sources/$WRAPPER_PACKAGE_NAME
-touch Sources/$WRAPPER_PACKAGE_NAME/Empty.swift
