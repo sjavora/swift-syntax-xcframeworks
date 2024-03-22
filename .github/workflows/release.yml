@@ -18,7 +18,7 @@ jobs:
     - uses: maxim-lobanov/setup-xcode@v1
       with:
         xcode-version: latest-stable
-    - run: .github/bootstrap.sh ${{ inputs.swift_syntax_tag }} SwiftBasicFormat SwiftCompilerPlugin SwiftCompilerPluginMessageHandling SwiftDiagnostics SwiftIDEUtils SwiftOperators SwiftParser SwiftParserDiagnostics SwiftRefactor SwiftSyntax SwiftSyntaxBuilder SwiftSyntaxMacros SwiftSyntaxMacroExpansion SwiftSyntaxMacrosTestSupport _SwiftSyntaxTestSupport
+    - run: .github/bootstrap.sh ${{ inputs.swift_syntax_tag }}
     - uses: stefanzweifel/git-auto-commit-action@v5
       with:
         commit_message: Updated for release ${{ inputs.swift_syntax_tag }}

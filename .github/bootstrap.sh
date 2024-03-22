@@ -7,6 +7,7 @@ SEMVER_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
 WRAPPER_NAME="SwiftSyntaxWrapper"
 ARCH="arm64"
 CONFIGURATION="debug"
+DERIVED_DATA_PATH="$PWD/derivedData"
 
 #
 # Verify input
@@ -68,30 +69,14 @@ tee $WRAPPER_TARGET_SOURCES_PATH/ExportedImports.swift <<EOF
 @_exported import SwiftSyntaxMacros
 EOF
 
-#
-# Build the wrapper
-#
-
-swift build --package-path $SWIFT_SYNTAX_NAME --arch $ARCH -c $CONFIGURATION -Xswiftc -enable-library-evolution -Xswiftc -emit-module-interface
-
-#
-# Create XCFramework
-#
-
-PATH_TO_LIBRARY="$SWIFT_SYNTAX_NAME/.build/$ARCH-apple-macosx/$CONFIGURATION/lib$WRAPPER_NAME.a"
-XCFRAMEWORK_NAME="$WRAPPER_NAME.xcframework"
-xcodebuild -create-xcframework -library $PATH_TO_LIBRARY -output $XCFRAMEWORK_NAME
-
 MODULES=(
     "SwiftBasicFormat"
     "SwiftCompilerPlugin"
     "SwiftCompilerPluginMessageHandling"
     "SwiftDiagnostics"
-    "SwiftIDEUtils"
     "SwiftOperators"
     "SwiftParser"
     "SwiftParserDiagnostics"
-    "SwiftRefactor"
     "SwiftSyntax"
     "SwiftSyntaxBuilder"
     "SwiftSyntaxMacroExpansion"
@@ -101,9 +86,63 @@ MODULES=(
     "$WRAPPER_NAME"
 )
 
-for MODULE in ${MODULES[@]}; do
-    PATH_TO_INTERFACE="$SWIFT_SYNTAX_NAME/.build/$ARCH-apple-macosx/${CONFIGURATION}/${MODULE}.build/${MODULE}.swiftinterface"
-    cp "${PATH_TO_INTERFACE}" "${XCFRAMEWORK_NAME}/macos-${ARCH}"
+PLATFORMS=(
+    # xcodebuild destination    XCFramework folder name
+    "macos"                     "macos-$ARCH"
+    "iOS Simulator"             "ios-$ARCH-simulator"
+)
+
+XCODEBUILD_LIBRARIES=""
+PLATFORMS_OUTPUTS_PATH="$PWD/outputs"
+
+cd $SWIFT_SYNTAX_NAME
+
+for ((i = 0; i < ${#PLATFORMS[@]}; i += 2)); do
+    XCODEBUILD_PLATFORM_NAME="${PLATFORMS[i]}"
+    XCFRAMEWORK_PLATFORM_NAME="${PLATFORMS[i+1]}"
+
+    OUTPUTS_PATH="${PLATFORMS_OUTPUTS_PATH}/${XCFRAMEWORK_PLATFORM_NAME}"
+    LIBRARY_PATH="${OUTPUTS_PATH}/lib${WRAPPER_NAME}.a"
+    XCODEBUILD_LIBRARIES="$XCODEBUILD_LIBRARIES -library $LIBRARY_PATH"
+
+    mkdir -p "$OUTPUTS_PATH"
+
+    # `swift build` cannot be used as it doesn't support building for iOS directly
+    xcodebuild -quiet clean build \
+        -scheme $WRAPPER_NAME \
+        -configuration $CONFIGURATION \
+        -destination "generic/platform=$XCODEBUILD_PLATFORM_NAME" \
+        -derivedDataPath $DERIVED_DATA_PATH \
+        SKIP_INSTALL=NO \
+        BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
+        >/dev/null 2>&1
+
+    for MODULE in ${MODULES[@]}; do
+        INTERFACE_PATH="$DERIVED_DATA_PATH/Build/Intermediates.noindex/swift-syntax.build/$CONFIGURATION*/${MODULE}.build/Objects-normal/$ARCH/${MODULE}.swiftinterface"
+        cp $INTERFACE_PATH "$OUTPUTS_PATH"
+    done
+
+    # FIXME: figure out how to make xcodebuild output the .a file directly. For now, we package it ourselves.
+    ar -crs "$LIBRARY_PATH" $DERIVED_DATA_PATH/Build/Intermediates.noindex/swift-syntax.build/$CONFIGURATION*/*.build/Objects-normal/$ARCH/Binary/*.o
+done
+
+cd ..
+
+#
+# Create XCFramework
+#
+
+XCFRAMEWORK_NAME="$WRAPPER_NAME.xcframework"
+XCFRAMEWORK_PATH="$XCFRAMEWORK_NAME"
+
+xcodebuild -quiet -create-xcframework \
+    $XCODEBUILD_LIBRARIES \
+    -output "${XCFRAMEWORK_PATH}" >/dev/null
+
+for ((i = 1; i < ${#PLATFORMS[@]}; i += 2)); do
+    XCFRAMEWORK_PLATFORM_NAME="${PLATFORMS[i]}"
+    OUTPUTS_PATH="${PLATFORMS_OUTPUTS_PATH}/${XCFRAMEWORK_PLATFORM_NAME}"
+    cp $OUTPUTS_PATH/*.swiftinterface "$XCFRAMEWORK_PATH/$XCFRAMEWORK_PLATFORM_NAME"
 done
 
 zip --quiet --recurse-paths $XCFRAMEWORK_NAME.zip $XCFRAMEWORK_NAME
@@ -116,7 +155,7 @@ CHECKSUM=$(swift package compute-checksum $XCFRAMEWORK_NAME.zip)
 URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$SWIFT_SYNTAX_VERSION/$XCFRAMEWORK_NAME.zip"
 
 tee Package.swift <<EOF
-// swift-tools-version: 5.9
+// swift-tools-version: 5.10
 
 import PackageDescription
 
