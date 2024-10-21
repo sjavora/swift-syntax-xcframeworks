@@ -54,6 +54,9 @@ sed -i '' -E "s/(products: \[)$/\1\n    .library(name: \"${WRAPPER_NAME}\", type
 
 sed -i '' -E "s/(targets: \[)$/\1\n    .target(name: \"${WRAPPER_NAME}\", dependencies: [\"SwiftCompilerPlugin\", \"SwiftSyntax\", \"SwiftSyntaxBuilder\", \"SwiftSyntaxMacros\", \"SwiftSyntaxMacrosTestSupport\"]),/g" "$SWIFT_SYNTAX_NAME/Package.swift"
 
+# for swift 600.x.y
+sed -i '' 's/, .version("6")//g' "$SWIFT_SYNTAX_NAME/Package.swift"
+
 #
 # Add exported imports to wrapper target
 #
@@ -82,7 +85,6 @@ MODULES=(
     "SwiftSyntaxMacroExpansion"
     "SwiftSyntaxMacros"
     "SwiftSyntaxMacrosTestSupport"
-    "_SwiftSyntaxTestSupport"
     "$WRAPPER_NAME"
 )
 
