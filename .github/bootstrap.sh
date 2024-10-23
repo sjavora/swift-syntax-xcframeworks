@@ -6,7 +6,7 @@ SWIFT_SYNTAX_REPOSITORY_URL="https://github.com/apple/$SWIFT_SYNTAX_NAME.git"
 SEMVER_PATTERN="^[0-9]+\.[0-9]+\.[0-9]+$"
 WRAPPER_NAME="SwiftSyntaxWrapper"
 ARCH="arm64"
-CONFIGURATION="debug"
+CONFIGURATION="release"
 DERIVED_DATA_PATH="$PWD/derivedData"
 
 #
@@ -66,10 +66,10 @@ WRAPPER_TARGET_SOURCES_PATH="$SWIFT_SYNTAX_NAME/Sources/$WRAPPER_NAME"
 mkdir -p $WRAPPER_TARGET_SOURCES_PATH
 
 tee $WRAPPER_TARGET_SOURCES_PATH/ExportedImports.swift <<EOF
-@_exported import SwiftCompilerPlugin
-@_exported import SwiftSyntax
-@_exported import SwiftSyntaxBuilder
-@_exported import SwiftSyntaxMacros
+public import SwiftCompilerPlugin
+public import SwiftSyntax
+public import SwiftSyntaxBuilder
+public import SwiftSyntaxMacros
 EOF
 
 MODULES=(
@@ -85,6 +85,9 @@ MODULES=(
     "SwiftSyntaxMacroExpansion"
     "SwiftSyntaxMacros"
     "SwiftSyntaxMacrosTestSupport"
+    "SwiftSyntaxMacrosGenericTestSupport"
+    "SwiftIDEUtils"
+    "_SwiftSyntaxGenericTestSupport"
     "$WRAPPER_NAME"
 )
 
@@ -110,14 +113,14 @@ for ((i = 0; i < ${#PLATFORMS[@]}; i += 2)); do
     mkdir -p "$OUTPUTS_PATH"
 
     # `swift build` cannot be used as it doesn't support building for iOS directly
-    xcodebuild -quiet clean build \
+    xcodebuild clean build \
         -scheme $WRAPPER_NAME \
         -configuration $CONFIGURATION \
         -destination "generic/platform=$XCODEBUILD_PLATFORM_NAME" \
         -derivedDataPath $DERIVED_DATA_PATH \
         SKIP_INSTALL=NO \
         BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-        >/dev/null 2>&1
+        | xcbeautify
 
     for MODULE in ${MODULES[@]}; do
         INTERFACE_PATH="$DERIVED_DATA_PATH/Build/Intermediates.noindex/swift-syntax.build/$CONFIGURATION*/${MODULE}.build/Objects-normal/$ARCH/${MODULE}.swiftinterface"
