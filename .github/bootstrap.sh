@@ -128,6 +128,7 @@ for ((i = 0; i < ${#PLATFORMS[@]}; i += 2)); do
     done
 
     # FIXME: figure out how to make xcodebuild output the .a file directly. For now, we package it ourselves.
+    strip -S $DERIVED_DATA_PATH/Build/Intermediates.noindex/swift-syntax.build/$CONFIGURATION*/*.build/Objects-normal/$ARCH/Binary/*.o
     ar -crs "$LIBRARY_PATH" $DERIVED_DATA_PATH/Build/Intermediates.noindex/swift-syntax.build/$CONFIGURATION*/*.build/Objects-normal/$ARCH/Binary/*.o
 done
 
